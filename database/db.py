@@ -96,3 +96,26 @@ def seed_db():
             )
     finally:
         conn.close()
+
+
+def get_user_by_email(email):
+    conn = get_db()
+    try:
+        return conn.execute(
+            "SELECT * FROM users WHERE lower(email) = lower(?)", (email,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def create_user(name, email, password_hash):
+    conn = get_db()
+    try:
+        with conn:
+            cursor = conn.execute(
+                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+                (name, email, password_hash),
+            )
+            return cursor.lastrowid
+    finally:
+        conn.close()
