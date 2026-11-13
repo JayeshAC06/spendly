@@ -1,17 +1,29 @@
+import os
 import sqlite3
 
-from flask import Flask, redirect, render_template, request, url_for
-from werkzeug.security import generate_password_hash
+from flask import Flask, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 
-from database.db import create_user, get_db, get_user_by_email, init_db, seed_db
+from database.db import (
+    create_user,
+    get_db,
+    get_user_by_email,
+    get_user_by_id,
+    init_db,
+    seed_db,
+)
 
 app = Flask(__name__)
+app.secret_key = os.environ.get(
+    "SECRET_KEY", "dev-only-insecure-secret-key-change-me"
+)
 
 with app.app_context():
     init_db()
     seed_db()
 
 DUPLICATE_EMAIL_ERROR = "An account with that email already exists."
+INVALID_LOGIN_ERROR = "Invalid email or password."
 
 
 def _validate_registration(name, email, password):
@@ -25,8 +37,23 @@ def _validate_registration(name, email, password):
     return None
 
 
+def get_current_user():
+    user_id = session.get("user_id")
+    if user_id is None:
+        return None
+    user = get_user_by_id(user_id)
+    if user is None:
+        session.pop("user_id", None)
+    return user
+
+
+@app.context_processor
+def inject_current_user():
+    return {"current_user": get_current_user()}
+
+
 # ------------------------------------------------------------------ #
-# Routes                                                              #
+# Routes                                                            #
 # ------------------------------------------------------------------ #
 
 @app.route("/")
@@ -67,10 +94,29 @@ def register():
     return redirect(url_for("login", registered=1))
 
 
-@app.route("/login")
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    registered = request.args.get("registered") == "1"
-    return render_template("login.html", registered=registered)
+    if request.method == "GET":
+        if get_current_user():
+            return redirect(url_for("profile"))
+        registered = request.args.get("registered") == "1"
+        return render_template("login.html", registered=registered)
+
+    email = request.form.get("email", "").strip().lower()
+    password = request.form.get("password", "")
+
+    user = get_user_by_email(email) if email and password else None
+    if user is None or not check_password_hash(user["password_hash"], password):
+        return (
+            render_template(
+                "login.html", error=INVALID_LOGIN_ERROR, email=email
+            ),
+            400,
+        )
+
+    session.clear()
+    session["user_id"] = user["id"]
+    return redirect(url_for("profile"))
 
 
 @app.route("/terms")
@@ -89,7 +135,8 @@ def privacy():
 
 @app.route("/logout")
 def logout():
-    return "Logout — coming in Step 3"
+    session.clear()
+    return redirect(url_for("login"))
 
 
 @app.route("/profile")
